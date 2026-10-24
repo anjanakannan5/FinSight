@@ -58,4 +58,35 @@ public class TransactionDAO {
         }
         return list;
     }
+
+    public List<Transaction> getByMonth(String month) throws Exception {
+        List<Transaction> list = new ArrayList<>();
+
+        String sql = """
+            SELECT * FROM transactions
+            WHERE substr(date, 1, 7) = ?
+            ORDER BY date DESC, id DESC
+            """;
+
+        try (Connection con = Database.connect();
+            PreparedStatement ps = con.prepareStatement(sql)) {
+
+            ps.setString(1, month);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    list.add(new Transaction(
+                        rs.getInt("id"),
+                        rs.getString("description"),
+                        rs.getString("category"),
+                        rs.getString("type"),
+                        rs.getDouble("amount"),
+                        rs.getString("date")
+                    ));
+                }
+            }
+        }
+
+        return list;
+    }
 }

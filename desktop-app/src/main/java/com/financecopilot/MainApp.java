@@ -8,12 +8,18 @@ import javafx.application.Application;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
+import javafx.scene.chart.*;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.Stage;
 import java.time.LocalDate;
+import java.time.YearMonth;
+import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
 
 public class MainApp extends Application {
     private final TransactionDAO dao = new TransactionDAO();
@@ -24,6 +30,14 @@ public class MainApp extends Application {
     private final TextField searchField = new TextField();
     private final ComboBox<String> filterType = new ComboBox<>();
     private List<Transaction> allTransactions = new ArrayList<>();
+
+    private Label monthlyIncomeLabel;
+    private Label monthlyExpenseLabel;
+    private Label monthlyBalanceLabel;
+    private ComboBox<String> monthSelector;
+    private ComboBox<Integer> yearSelector;
+    private BarChart<String, Number> monthlyBarChart;
+    private PieChart expensePieChart;
 
     @Override
     public void start(Stage stage) {
@@ -41,6 +55,63 @@ public class MainApp extends Application {
                 createCard("Balance", balanceLabel));
         summary.setPadding(new Insets(15, 0, 15, 0));
 
+        Label monthlyTitle = new Label("Monthly Financial Analysis");
+        monthlyTitle.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
+
+        monthSelector = new ComboBox<>();
+        monthSelector.getItems().addAll(
+                "January", "February", "March", "April",
+                "May", "June", "July", "August",
+                "September", "October", "November", "December");
+
+        yearSelector = new ComboBox<>();
+        int currentYear = LocalDate.now().getYear();
+
+        for (int year = currentYear - 5; year <= currentYear + 1; year++) {
+            yearSelector.getItems().add(year);
+        }
+
+        monthSelector.setValue(LocalDate.now().getMonth()
+                .getDisplayName(TextStyle.FULL, Locale.ENGLISH));
+        yearSelector.setValue(currentYear);
+
+        HBox monthControls = new HBox(10,
+                new Label("Month:"), monthSelector,
+                new Label("Year:"), yearSelector);
+
+        monthlyIncomeLabel = new Label("Income: ₹0.00");
+        monthlyExpenseLabel = new Label("Expenses: ₹0.00");
+        monthlyBalanceLabel = new Label("Balance: ₹0.00");
+
+        monthlyIncomeLabel.setStyle("-fx-font-weight: bold;");
+        monthlyExpenseLabel.setStyle("-fx-font-weight: bold;");
+        monthlyBalanceLabel.setStyle("-fx-font-weight: bold;");
+
+        HBox monthlySummary = new HBox(25,
+                monthlyIncomeLabel,
+                monthlyExpenseLabel,
+                monthlyBalanceLabel);
+
+        VBox monthlySection = new VBox(12,
+                monthlyTitle,
+                new Label("Select a month and year to view its financial summary"),
+                monthControls,
+                monthlySummary);
+
+        monthlySection.setPadding(new Insets(15));
+        monthlySection.setStyle(
+                "-fx-background-color: white; -fx-background-radius: 10;");
+
+        createCharts();
+
+        HBox chartsSection = new HBox(15, monthlyBarChart, expensePieChart);
+        HBox.setHgrow(monthlyBarChart, Priority.ALWAYS);
+        HBox.setHgrow(expensePieChart, Priority.ALWAYS);
+        chartsSection.setPadding(new Insets(10, 0, 10, 0));
+
+        monthSelector.setOnAction(e -> loadMonthlyAnalysis());
+        yearSelector.setOnAction(e -> loadMonthlyAnalysis());
+
         TextField description = new TextField();
         description.setPromptText("Description");
 
@@ -57,7 +128,8 @@ public class MainApp extends Application {
         DatePicker date = new DatePicker(LocalDate.now());
 
         Button addButton = new Button("Add Transaction");
-        addButton.setStyle("-fx-background-color: #2457C5; -fx-text-fill: white;");
+        addButton.setStyle(
+                "-fx-background-color: #2457C5; -fx-text-fill: white;");
 
         addButton.setOnAction(e -> {
             try {
@@ -65,13 +137,15 @@ public class MainApp extends Application {
                 String cat = category.getText().trim();
                 double value = Double.parseDouble(amount.getText().trim());
 
-                if (desc.isEmpty() || cat.isEmpty() || value <= 0 || date.getValue() == null) {
+                if (desc.isEmpty() || cat.isEmpty()
+                        || value <= 0 || date.getValue() == null) {
                     showAlert("Enter valid transaction details.");
                     return;
                 }
 
                 Transaction transaction = new Transaction(
-                        0, desc, cat, type.getValue(), value, date.getValue().toString());
+                        0, desc, cat, type.getValue(),
+                        value, date.getValue().toString());
 
                 dao.add(transaction);
 
@@ -113,8 +187,8 @@ public class MainApp extends Application {
         filterType.setValue("All");
 
         Button resetButton = new Button("Reset");
-        HBox searchBar = new HBox(10, searchField, filterType, resetButton);
-        searchBar.setPadding(new Insets(5, 0, 10, 0));
+        HBox searchBar = new HBox(10,
+                searchField, filterType, resetButton);
 
         searchField.textProperty().addListener(
                 (obs, oldValue, newValue) -> filterTransactions());
@@ -136,20 +210,55 @@ public class MainApp extends Application {
         historyTitle.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
 
         VBox content = new VBox(10,
-                heading, subtitle, summary,
-                formTitle, form, historyTitle, searchBar, table, deleteButton);
+                heading,
+                subtitle,
+                summary,
+                monthlySection,
+                chartsSection,
+                formTitle,
+                form,
+                historyTitle,
+                searchBar,
+                table,
+                deleteButton);
+
         content.setPadding(new Insets(25));
 
         ScrollPane scrollPane = new ScrollPane(content);
         scrollPane.setFitToWidth(true);
-        scrollPane.setStyle("-fx-background: #F5F7FB; -fx-background-color: #F5F7FB;");
+        scrollPane.setStyle(
+                "-fx-background: #F5F7FB; -fx-background-color: #F5F7FB;");
 
-        Scene scene = new Scene(scrollPane, 1050, 700);
+        Scene scene = new Scene(scrollPane, 1100, 850);
         stage.setTitle("Finance Copilot");
         stage.setScene(scene);
         stage.show();
 
         loadTransactions();
+    }
+
+    private void createCharts() {
+        CategoryAxis xAxis = new CategoryAxis();
+        xAxis.setLabel("Transaction Type");
+
+        NumberAxis yAxis = new NumberAxis();
+        yAxis.setLabel("Amount (₹)");
+        yAxis.setForceZeroInRange(true);
+
+        monthlyBarChart = new BarChart<>(xAxis, yAxis);
+        monthlyBarChart.setTitle("Monthly Income vs Expenses");
+        monthlyBarChart.setLegendVisible(false);
+        monthlyBarChart.setAnimated(false);
+        monthlyBarChart.setPrefHeight(320);
+        monthlyBarChart.setMinWidth(300);
+
+        expensePieChart = new PieChart();
+        expensePieChart.setTitle("Expense Breakdown by Category");
+        expensePieChart.setLegendVisible(true);
+        expensePieChart.setLabelsVisible(true);
+        expensePieChart.setAnimated(false);
+        expensePieChart.setPrefHeight(320);
+        expensePieChart.setMinWidth(300);
     }
 
     private VBox createCard(String title, Label value) {
@@ -160,39 +269,48 @@ public class MainApp extends Application {
         VBox card = new VBox(10, heading, value);
         card.setPadding(new Insets(20));
         card.setPrefWidth(300);
-        card.setStyle("-fx-background-color: white; -fx-background-radius: 10;");
+        card.setStyle(
+                "-fx-background-color: white; -fx-background-radius: 10;");
+
         return card;
     }
 
     private void setupTable() {
-        TableColumn<Transaction, String> descriptionCol = new TableColumn<>("Description");
+        TableColumn<Transaction, String> descriptionCol =
+                new TableColumn<>("Description");
         descriptionCol.setCellValueFactory(data ->
                 new javafx.beans.property.SimpleStringProperty(
                         data.getValue().getDescription()));
 
-        TableColumn<Transaction, String> categoryCol = new TableColumn<>("Category");
+        TableColumn<Transaction, String> categoryCol =
+                new TableColumn<>("Category");
         categoryCol.setCellValueFactory(data ->
                 new javafx.beans.property.SimpleStringProperty(
                         data.getValue().getCategory()));
 
-        TableColumn<Transaction, String> typeCol = new TableColumn<>("Type");
+        TableColumn<Transaction, String> typeCol =
+                new TableColumn<>("Type");
         typeCol.setCellValueFactory(data ->
                 new javafx.beans.property.SimpleStringProperty(
                         data.getValue().getType()));
 
-        TableColumn<Transaction, String> amountCol = new TableColumn<>("Amount");
+        TableColumn<Transaction, String> amountCol =
+                new TableColumn<>("Amount");
         amountCol.setCellValueFactory(data ->
                 new javafx.beans.property.SimpleStringProperty(
                         String.format("₹%.2f", data.getValue().getAmount())));
 
-        TableColumn<Transaction, String> dateCol = new TableColumn<>("Date");
+        TableColumn<Transaction, String> dateCol =
+                new TableColumn<>("Date");
         dateCol.setCellValueFactory(data ->
                 new javafx.beans.property.SimpleStringProperty(
                         data.getValue().getDate()));
 
         table.getColumns().addAll(
                 descriptionCol, categoryCol, typeCol, amountCol, dateCol);
-        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+
+        table.setColumnResizePolicy(
+                TableView.CONSTRAINED_RESIZE_POLICY);
         table.setPrefHeight(300);
     }
 
@@ -204,8 +322,10 @@ public class MainApp extends Application {
                 .filter(t -> t.getDescription().toLowerCase().contains(search)
                         || t.getCategory().toLowerCase().contains(search))
                 .filter(t -> "All".equals(filter)
-                        || ("Income".equals(filter) && t.getType().equals("INCOME"))
-                        || ("Expenses".equals(filter) && t.getType().equals("EXPENSE")))
+                        || ("Income".equals(filter)
+                        && t.getType().equals("INCOME"))
+                        || ("Expenses".equals(filter)
+                        && t.getType().equals("EXPENSE")))
                 .toList();
 
         table.setItems(FXCollections.observableArrayList(filtered));
@@ -230,7 +350,8 @@ public class MainApp extends Application {
                     dao.delete(selected.getId());
                     loadTransactions();
                 } catch (Exception ex) {
-                    showAlert("Could not delete transaction: " + ex.getMessage());
+                    showAlert(
+                            "Could not delete transaction: " + ex.getMessage());
                 }
             }
         });
@@ -255,8 +376,76 @@ public class MainApp extends Application {
             incomeLabel.setText(String.format("₹%.2f", income));
             expenseLabel.setText(String.format("₹%.2f", expenses));
             balanceLabel.setText(String.format("₹%.2f", income - expenses));
+
+            loadMonthlyAnalysis();
         } catch (Exception ex) {
             showAlert("Could not load transactions: " + ex.getMessage());
+        }
+    }
+
+    private void loadMonthlyAnalysis() {
+        try {
+            if (monthSelector == null || yearSelector == null
+                    || monthSelector.getValue() == null
+                    || yearSelector.getValue() == null) {
+                return;
+            }
+
+            int monthNumber =
+                    monthSelector.getSelectionModel().getSelectedIndex() + 1;
+
+            String month = String.format("%04d-%02d",
+                    yearSelector.getValue(), monthNumber);
+
+            List<Transaction> transactions = dao.getByMonth(month);
+
+            double income = 0;
+            double expenses = 0;
+            Map<String, Double> categoryTotals = new TreeMap<>();
+
+            for (Transaction transaction : transactions) {
+                if (transaction.getType().equals("INCOME")) {
+                    income += transaction.getAmount();
+                } else {
+                    expenses += transaction.getAmount();
+
+                    categoryTotals.merge(
+                            transaction.getCategory(),
+                            transaction.getAmount(),
+                            Double::sum);
+                }
+            }
+
+            monthlyIncomeLabel.setText(
+                    String.format("Income: ₹%.2f", income));
+            monthlyExpenseLabel.setText(
+                    String.format("Expenses: ₹%.2f", expenses));
+            monthlyBalanceLabel.setText(
+                    String.format("Balance: ₹%.2f", income - expenses));
+
+            XYChart.Series<String, Number> series = new XYChart.Series<>();
+            series.setName("Amount");
+
+            series.getData().add(
+                    new XYChart.Data<>("Income", income));
+            series.getData().add(
+                    new XYChart.Data<>("Expenses", expenses));
+
+            monthlyBarChart.getData().setAll(series);
+
+            List<PieChart.Data> pieData = new ArrayList<>();
+
+            for (Map.Entry<String, Double> entry : categoryTotals.entrySet()) {
+                pieData.add(new PieChart.Data(
+                        entry.getKey(),
+                        entry.getValue()));
+            }
+
+            expensePieChart.setData(
+                    FXCollections.observableArrayList(pieData));
+
+        } catch (Exception ex) {
+            showAlert("Could not load monthly analysis: " + ex.getMessage());
         }
     }
 
