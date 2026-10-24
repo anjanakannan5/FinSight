@@ -25,17 +25,15 @@ def validate_transactions(data):
             return None, "Amount must be a number"
 
         try:
-            amount = float(t["amount"])
+            t["amount"] = float(t["amount"])
         except (ValueError, TypeError):
             return None, "Amount must be a number"
 
-        if amount <= 0:
+        if t["amount"] <= 0:
             return None, "Amount must be positive"
 
         if not isinstance(t["category"], str) or not t["category"].strip():
             return None, "Category cannot be empty"
-
-        t["amount"] = amount
 
     return transactions, None
 
@@ -56,17 +54,11 @@ def calculate_totals(transactions):
 
 
 def percentage_change(old, new):
-    if old == 0:
-        return None
-    return round((new - old) / abs(old) * 100, 2)
+    return round((new - old) / abs(old) * 100, 2) if old != 0 else None
 
 
 def monthly_totals(transactions, month):
-    selected = [
-        t for t in transactions
-        if t.get("date", "").startswith(month)
-    ]
-
+    selected = [t for t in transactions if t.get("date", "").startswith(month)]
     income, expenses, balance, _, _ = calculate_totals(selected)
 
     return {
@@ -75,6 +67,15 @@ def monthly_totals(transactions, month):
         "balance": round(balance, 2),
         "transaction_count": len(selected)
     }
+
+
+def percentile(values, percent):
+    values = sorted(values)
+    position = (len(values) - 1) * percent
+    lower = int(position)
+    upper = min(lower + 1, len(values) - 1)
+    fraction = position - lower
+    return values[lower] + (values[upper] - values[lower]) * fraction
 
 
 @app.route("/", methods=["GET"])
@@ -87,10 +88,7 @@ def home():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({
-        "service": "Finance Copilot",
-        "status": "healthy"
-    })
+    return jsonify({"service": "Finance Copilot", "status": "healthy"})
 
 
 @app.route("/analyze", methods=["POST"])
@@ -122,8 +120,8 @@ def insights():
     income, expenses, balance, savings_rate, categories = calculate_totals(transactions)
     expense_transactions = [t for t in transactions if t["type"] == "EXPENSE"]
     top_category = max(categories, key=categories.get) if categories else "None"
-
     largest = max(expense_transactions, key=lambda t: t["amount"], default=None)
+
     shares = {
         category: round(amount / expenses * 100, 2) if expenses else 0
         for category, amount in categories.items()
@@ -171,12 +169,10 @@ def insights():
 @app.route("/compare", methods=["POST"])
 def compare():
     data = request.get_json(silent=True)
-
     if not isinstance(data, dict):
         return jsonify({"error": "A JSON object is required"}), 400
 
-    month1 = data.get("month1")
-    month2 = data.get("month2")
+    month1, month2 = data.get("month1"), data.get("month2")
 
     for month in [month1, month2]:
         try:
@@ -217,6 +213,59 @@ def compare():
             "increased" if second["expenses"] > first["expenses"]
             else "decreased" if second["expenses"] < first["expenses"]
             else "unchanged"
+        )
+    })
+
+
+@app.route("/detect-anomalies", methods=["POST"])
+def detect_anomalies():
+    transactions, error = validate_transactions(request.get_json(silent=True))
+    if error:
+        return jsonify({"error": error}), 400
+
+    expenses = [t for t in transactions if t["type"] == "EXPENSE"]
+    grouped = {}
+
+    for t in expenses:
+        grouped.setdefault(t["category"].strip(), []).append(t)
+
+    anomalies = []
+    categories_checked = 0
+
+    for category, items in grouped.items():
+        amounts = [t["amount"] for t in items]
+
+        if len(amounts) < 4:
+            continue
+
+        categories_checked += 1
+        q1 = percentile(amounts, 0.25)
+        q3 = percentile(amounts, 0.75)
+        iqr = q3 - q1
+        upper_limit = q3 + 1.5 * iqr
+
+        for t in items:
+            if t["amount"] > upper_limit:
+                anomalies.append({
+                    "description": t.get("description", "Not provided"),
+                    "category": category,
+                    "amount": t["amount"],
+                    "usual_upper_limit": round(upper_limit, 2),
+                    "message": (
+                        f"This {category} expense is unusually high "
+                        f"compared with other expenses in the same category"
+                    )
+                })
+
+    return jsonify({
+        "anomalies": anomalies,
+        "anomaly_count": len(anomalies),
+        "categories_checked": categories_checked,
+        "method": "Interquartile Range (IQR)",
+        "message": (
+            "Unusual expenses detected"
+            if anomalies else
+            "No unusual expenses detected in categories with enough transactions"
         )
     })
 
