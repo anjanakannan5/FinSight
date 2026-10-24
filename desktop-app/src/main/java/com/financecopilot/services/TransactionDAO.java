@@ -26,6 +26,18 @@ public class TransactionDAO {
         }
     }
 
+    public void delete(int id) {
+        String sql = "DELETE FROM transactions WHERE id = ?";
+
+        try (Connection con = Database.connect();
+            PreparedStatement ps = con.prepareStatement(sql)) {
+            ps.setInt(1, id);
+            ps.executeUpdate();
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to delete transaction", e);
+        }
+    }
+
     public List<Transaction> getAll() throws Exception {
         List<Transaction> list = new ArrayList<>();
         String sql = "SELECT * FROM transactions ORDER BY date DESC, id DESC";
