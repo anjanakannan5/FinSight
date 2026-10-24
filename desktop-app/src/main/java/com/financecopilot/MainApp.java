@@ -4,6 +4,7 @@ package com.financecopilot;
 import com.financecopilot.database.Database;
 import com.financecopilot.models.Transaction;
 import com.financecopilot.services.TransactionDAO;
+import com.financecopilot.services.AnalysisService;
 import javafx.application.Application;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
@@ -13,16 +14,22 @@ import javafx.scene.control.*;
 import javafx.scene.layout.*;
 import javafx.stage.Stage;
 import java.time.LocalDate;
-import java.time.YearMonth;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import javafx.application.Platform;
+import javafx.scene.control.ProgressIndicator;
+import org.json.JSONObject;
 
 public class MainApp extends Application {
     private final TransactionDAO dao = new TransactionDAO();
+    private final AnalysisService analysisService = new AnalysisService();
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final TableView<Transaction> table = new TableView<>();
     private final Label incomeLabel = new Label("₹0.00");
     private final Label expenseLabel = new Label("₹0.00");
@@ -38,6 +45,14 @@ public class MainApp extends Application {
     private ComboBox<Integer> yearSelector;
     private BarChart<String, Number> monthlyBarChart;
     private PieChart expensePieChart;
+
+    private Label aiIncomeLabel;
+    private Label aiExpenseLabel;
+    private Label aiBalanceLabel;
+    private Label aiSavingsLabel;
+    private Label aiCategoryLabel;
+    private Label aiStatusLabel;
+    private Button analyzeButton;
 
     @Override
     public void start(Stage stage) {
@@ -111,6 +126,8 @@ public class MainApp extends Application {
 
         monthSelector.setOnAction(e -> loadMonthlyAnalysis());
         yearSelector.setOnAction(e -> loadMonthlyAnalysis());
+
+        VBox aiSection = createAIAnalysisSection();
 
         TextField description = new TextField();
         description.setPromptText("Description");
@@ -215,6 +232,7 @@ public class MainApp extends Application {
                 summary,
                 monthlySection,
                 chartsSection,
+                aiSection,
                 formTitle,
                 form,
                 historyTitle,
@@ -229,12 +247,100 @@ public class MainApp extends Application {
         scrollPane.setStyle(
                 "-fx-background: #F5F7FB; -fx-background-color: #F5F7FB;");
 
-        Scene scene = new Scene(scrollPane, 1100, 850);
+        Scene scene = new Scene(scrollPane, 1100, 900);
         stage.setTitle("Finance Copilot");
         stage.setScene(scene);
         stage.show();
 
+        stage.setOnCloseRequest(e -> executor.shutdownNow());
+
         loadTransactions();
+    }
+
+    private VBox createAIAnalysisSection() {
+        Label title = new Label("Python Financial Analysis");
+        title.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
+
+        aiIncomeLabel = new Label("Total Income: —");
+        aiExpenseLabel = new Label("Total Expenses: —");
+        aiBalanceLabel = new Label("Balance: —");
+        aiSavingsLabel = new Label("Savings Rate: —");
+        aiCategoryLabel = new Label("Largest Expense Category: —");
+        aiStatusLabel = new Label("Click Refresh Analysis to analyze your transactions.");
+
+        aiStatusLabel.setWrapText(true);
+
+        analyzeButton = new Button("Refresh Analysis");
+        analyzeButton.setStyle(
+                "-fx-background-color: #2457C5; -fx-text-fill: white;");
+        analyzeButton.setOnAction(e -> refreshAIAnalysis());
+
+        VBox section = new VBox(12,
+                title,
+                aiIncomeLabel,
+                aiExpenseLabel,
+                aiBalanceLabel,
+                aiSavingsLabel,
+                aiCategoryLabel,
+                new HBox(12, analyzeButton, aiStatusLabel));
+
+        section.setPadding(new Insets(15));
+        section.setStyle(
+                "-fx-background-color: white; -fx-background-radius: 10;");
+
+        return section;
+    }
+
+    private void refreshAIAnalysis() {
+        analyzeButton.setDisable(true);
+        aiStatusLabel.setText("Analyzing transactions...");
+
+        executor.submit(() -> {
+            try {
+                List<Transaction> transactions = dao.getAll();
+
+                if (transactions.isEmpty()) {
+                    Platform.runLater(() -> {
+                        aiStatusLabel.setText("Add transactions before analyzing.");
+                        analyzeButton.setDisable(false);
+                    });
+                    return;
+                }
+
+                String response = analysisService.analyzeTransactions(transactions);
+                JSONObject result = new JSONObject(response);
+
+                Platform.runLater(() -> {
+                    aiIncomeLabel.setText(String.format(
+                            "Total Income: ₹%.2f",
+                            result.getDouble("total_income")));
+                    aiExpenseLabel.setText(String.format(
+                            "Total Expenses: ₹%.2f",
+                            result.getDouble("total_expenses")));
+                    aiBalanceLabel.setText(String.format(
+                            "Balance: ₹%.2f",
+                            result.getDouble("balance")));
+                    aiSavingsLabel.setText(String.format(
+                            "Savings Rate: %.2f%%",
+                            result.getDouble("savings_rate_percent")));
+
+                    Object category = result.opt("largest_expense_category");
+                    aiCategoryLabel.setText(
+                            "Largest Expense Category: "
+                                    + (category == null || category == JSONObject.NULL
+                                    ? "None" : category));
+
+                    aiStatusLabel.setText("Analysis updated successfully.");
+                    analyzeButton.setDisable(false);
+                });
+            } catch (Exception ex) {
+                Platform.runLater(() -> {
+                    aiStatusLabel.setText(
+                            "Analysis failed. Is the Python server running?");
+                    analyzeButton.setDisable(false);
+                });
+            }
+        });
     }
 
     private void createCharts() {
