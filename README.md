@@ -1,5 +1,5 @@
 
-# Finance Copilot
+# FinSight
 
 AI-Powered Financial Analysis & Decision Support System
 
