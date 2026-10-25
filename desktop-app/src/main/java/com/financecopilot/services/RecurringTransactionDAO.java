@@ -1,39 +1,15 @@
-
 package com.financecopilot.services;
 
+import com.financecopilot.database.Database;
 import java.sql.*;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.List;
 
 public class RecurringTransactionDAO {
-    private final String url = "jdbc:sqlite:../data/finance_copilot.db";
 
     public RecurringTransactionDAO() {
-        try (Connection con = DriverManager.getConnection(url);
-             Statement st = con.createStatement()) {
-            st.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS recurring_transactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    description TEXT NOT NULL,
-                    category TEXT NOT NULL,
-                    type TEXT NOT NULL,
-                    amount REAL NOT NULL,
-                    day_of_month INTEGER NOT NULL
-                )
-            """);
-
-            st.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS recurring_generated (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    rule_id INTEGER NOT NULL,
-                    month TEXT NOT NULL,
-                    UNIQUE(rule_id, month)
-                )
-            """);
-        } catch (SQLException e) {
-            throw new RuntimeException("Could not create recurring tables", e);
-        }
+        // Table schema is guaranteed by Database.initialize()
     }
 
     public void addRule(String description, String category, String type,
@@ -44,7 +20,7 @@ public class RecurringTransactionDAO {
             VALUES (?, ?, ?, ?, ?)
         """;
 
-        try (Connection con = DriverManager.getConnection(url);
+        try (Connection con = Database.connect();
              PreparedStatement ps = con.prepareStatement(sql)) {
             ps.setString(1, description);
             ps.setString(2, category);
@@ -58,7 +34,7 @@ public class RecurringTransactionDAO {
     public List<Rule> getRules() throws SQLException {
         List<Rule> rules = new ArrayList<>();
 
-        try (Connection con = DriverManager.getConnection(url);
+        try (Connection con = Database.connect();
              Statement st = con.createStatement();
              ResultSet rs = st.executeQuery(
                  "SELECT * FROM recurring_transactions ORDER BY id DESC")) {
@@ -76,12 +52,11 @@ public class RecurringTransactionDAO {
         return rules;
     }
 
-    
     public int generateForMonth(String month) throws SQLException {
         YearMonth ym = YearMonth.parse(month);
         int generated = 0;
 
-        try (Connection con = DriverManager.getConnection(url)) {
+        try (Connection con = Database.connect()) {
             con.setAutoCommit(false);
 
             try {
@@ -164,7 +139,7 @@ public class RecurringTransactionDAO {
     }
 
     public void deleteRule(int id) throws SQLException {
-        try (Connection con = DriverManager.getConnection(url)) {
+        try (Connection con = Database.connect()) {
             con.setAutoCommit(false);
             try (PreparedStatement ps = con.prepareStatement(
                     "DELETE FROM recurring_transactions WHERE id=?");

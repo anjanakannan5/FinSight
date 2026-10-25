@@ -1,11 +1,41 @@
+"""
+FinSight — Developer / Demo Data Seeding Utility
+Optional script for local testing and feature demonstration.
+Note: This is strictly an optional developer tool and is NEVER executed
+automatically during application startup.
+"""
 
 import sqlite3
+import os
+import sys
 from pathlib import Path
 from datetime import date
 from calendar import monthrange
 
-db_path = Path(__file__).parent / "data" / "finance_copilot.db"
+# Determine target database:
+# 1. Command-line argument: --db <path>
+# 2. Environment variable: FINSIGHT_DB
+# 3. User production AppData path if exists: %APPDATA%\FinSight\data\finsight.db
+# 4. Project workspace fallback: ./data/finsight.db
+
+db_path = None
+if len(sys.argv) > 2 and sys.argv[1] == "--db":
+    db_path = Path(sys.argv[2])
+elif os.environ.get("FINSIGHT_DB"):
+    db_path = Path(os.environ["FINSIGHT_DB"])
+elif os.environ.get("FINANCE_COPILOT_DB"):
+    db_path = Path(os.environ["FINANCE_COPILOT_DB"])
+else:
+    app_data = os.environ.get("APPDATA")
+    if app_data and (Path(app_data) / "FinSight" / "data" / "finsight.db").exists():
+        db_path = Path(app_data) / "FinSight" / "data" / "finsight.db"
+    elif app_data and (Path(app_data) / "FinanceCopilot" / "data" / "finance_copilot.db").exists():
+        db_path = Path(app_data) / "FinanceCopilot" / "data" / "finance_copilot.db"
+    else:
+        db_path = Path(__file__).parent / "data" / "finsight.db"
+
 db_path.parent.mkdir(parents=True, exist_ok=True)
+print(f"Targeting database: {db_path.resolve()}")
 
 today = date.today()
 current_month = today.replace(day=1)
@@ -60,7 +90,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 )
 """)
 
-# Remove only rows created by this script, so rerunning won't duplicate them.
+# Remove only rows created by this demo script, so rerunning won't duplicate them.
 cur.execute("""
 DELETE FROM transactions
 WHERE description LIKE 'DEMO-%'
@@ -80,7 +110,7 @@ for month in (previous_month, current_month):
             transaction_date(month, day)
         ))
 
-    # A second salary is not added; this is a one-off bonus to test income.
+    # One-off bonus for testing income variance
     cur.execute("""
         INSERT INTO transactions
         (description, category, type, amount, date)
@@ -96,6 +126,6 @@ for month in (previous_month, current_month):
 conn.commit()
 conn.close()
 
-print("Sample transactions added for", previous_month.strftime("%Y-%m"),
+print("Sample demo transactions added for", previous_month.strftime("%Y-%m"),
       "and", current_month.strftime("%Y-%m"))
-print("Open Finance Copilot and refresh the dashboard to view them.")
+print("Open FinSight to view them.")

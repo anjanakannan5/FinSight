@@ -81,14 +81,14 @@ def percentile(values, percent):
 @app.route("/", methods=["GET"])
 def home():
     return jsonify({
-        "message": "Finance Copilot Analysis Service is running",
+        "message": "FinSight Analysis Service is running",
         "status": "success"
     })
 
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"service": "Finance Copilot", "status": "healthy"})
+    return jsonify({"service": "FinSight", "status": "healthy"})
 
 
 @app.route("/analyze", methods=["POST"])

@@ -1,28 +1,14 @@
-
 package com.financecopilot.services;
 
+import com.financecopilot.database.Database;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 
 public class BudgetDAO {
-    private final String url = "jdbc:sqlite:../data/finance_copilot.db";
 
     public BudgetDAO() {
-        try (Connection con = DriverManager.getConnection(url);
-             Statement st = con.createStatement()) {
-            st.executeUpdate("""
-                CREATE TABLE IF NOT EXISTS budgets (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    category TEXT NOT NULL,
-                    month TEXT NOT NULL,
-                    limit_amount REAL NOT NULL,
-                    UNIQUE(category, month)
-                )
-            """);
-        } catch (SQLException e) {
-            throw new RuntimeException("Could not create budget table", e);
-        }
+        // Table schema is guaranteed by Database.initialize()
     }
 
     public void saveBudget(String category, String month, double limit) throws SQLException {
@@ -33,7 +19,7 @@ public class BudgetDAO {
             DO UPDATE SET limit_amount = excluded.limit_amount
         """;
 
-        try (Connection con = DriverManager.getConnection(url);
+        try (Connection con = Database.connect();
              PreparedStatement ps = con.prepareStatement(sql)) {
             ps.setString(1, category);
             ps.setString(2, month);
@@ -58,7 +44,7 @@ public class BudgetDAO {
             ORDER BY b.category
         """;
 
-        try (Connection con = DriverManager.getConnection(url);
+        try (Connection con = Database.connect();
              PreparedStatement ps = con.prepareStatement(sql)) {
             ps.setString(1, month);
 
@@ -78,7 +64,7 @@ public class BudgetDAO {
     }
 
     public void deleteBudget(int id) throws SQLException {
-        try (Connection con = DriverManager.getConnection(url);
+        try (Connection con = Database.connect();
              PreparedStatement ps = con.prepareStatement(
                  "DELETE FROM budgets WHERE id = ?")) {
             ps.setInt(1, id);
