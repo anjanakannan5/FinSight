@@ -8,6 +8,11 @@ import com.financecopilot.services.SavingsGoalDAO;
 import com.financecopilot.services.TransactionDAO;
 import com.financecopilot.services.BudgetDAO;
 import com.financecopilot.services.RecurringTransactionDAO;
+import com.lowagie.text.Document;
+import com.lowagie.text.Paragraph;
+import com.lowagie.text.Phrase;
+import com.lowagie.text.pdf.PdfPTable;
+import com.lowagie.text.pdf.PdfWriter;
 
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -62,6 +67,8 @@ import javafx.stage.FileChooser;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.BufferedWriter;
+import java.io.FileOutputStream;
+import java.util.HashMap;
 
 public class MainApp extends Application {
 
@@ -146,6 +153,10 @@ public class MainApp extends Application {
     private ComboBox<String> recurringType;
     private Spinner<Integer> recurringDay;
     private Label recurringStatus;
+
+    private Label healthScoreLabel;
+    private Label healthRecommendationLabel;
+    private Button healthScoreButton;
 
     @Override
     public void start(Stage stage) {
@@ -333,6 +344,13 @@ public class MainApp extends Application {
 
         VBox recurringSection = createRecurringSection();
 
+        Button pdfReportButton = new Button("Export Monthly PDF Report");
+        pdfReportButton.setOnAction(e -> exportMonthlyReport());
+
+        HBox reportControls = new HBox(10, pdfReportButton);
+
+        VBox financialHealthSection = createFinancialHealthSection();
+
         VBox content = new VBox(
             15,
             heading,
@@ -340,7 +358,9 @@ public class MainApp extends Application {
             summary,
             monthlySection,
             chartsSection,
+            reportControls,
             aiSection,
+            financialHealthSection,
             insightsSection,
             comparisonSection,
             savingsGoalsSection,
@@ -1699,6 +1719,223 @@ public class MainApp extends Application {
         }
     }
 
+    private void exportMonthlyReport() {
+        if (monthSelector.getValue() == null || yearSelector.getValue() == null) {
+            showAlert("Select a month and year first.");
+            return;
+        }
+
+        String month = String.format("%04d-%02d",
+            yearSelector.getValue(),
+            monthSelector.getSelectionModel().getSelectedIndex() + 1);
+
+        javafx.stage.FileChooser chooser = new javafx.stage.FileChooser();
+        chooser.setTitle("Export Monthly Financial Report");
+        chooser.setInitialFileName("Finance_Report_" + month + ".pdf");
+        chooser.getExtensionFilters().add(
+            new javafx.stage.FileChooser.ExtensionFilter("PDF Files", "*.pdf"));
+
+        java.io.File file = chooser.showSaveDialog(table.getScene().getWindow());
+        if (file == null) return;
+
+        try {
+            List<Transaction> transactions = dao.getByMonth(month);
+            double income = 0, expenses = 0;
+            Map<String, Double> categories = new TreeMap<>();
+
+            for (Transaction t : transactions) {
+                if ("INCOME".equals(t.getType())) {
+                    income += t.getAmount();
+                } else {
+                    expenses += t.getAmount();
+                    categories.merge(t.getCategory(), t.getAmount(), Double::sum);
+                }
+            }
+
+            Document document = new Document();
+            PdfWriter.getInstance(document, new FileOutputStream(file));
+            document.open();
+
+            document.add(new Paragraph("FINANCE COPILOT"));
+            document.add(new Paragraph("Monthly Financial Report: " + month));
+            document.add(new Paragraph("Generated on: " + LocalDate.now()));
+            document.add(new Paragraph(" "));
+
+            document.add(new Paragraph(String.format("Total Income: Rs. %.2f", income)));
+            document.add(new Paragraph(String.format("Total Expenses: Rs. %.2f", expenses)));
+            document.add(new Paragraph(String.format("Net Balance: Rs. %.2f", income - expenses)));
+            document.add(new Paragraph(" "));
+
+            document.add(new Paragraph("Category-wise Expenses"));
+            PdfPTable categoryTable = new PdfPTable(2);
+            categoryTable.addCell(new Phrase("Category"));
+            categoryTable.addCell(new Phrase("Amount"));
+
+            for (Map.Entry<String, Double> entry : categories.entrySet()) {
+                categoryTable.addCell(entry.getKey());
+                categoryTable.addCell(String.format("Rs. %.2f", entry.getValue()));
+            }
+            document.add(categoryTable);
+            document.add(new Paragraph(" "));
+
+            document.add(new Paragraph("Transactions"));
+            PdfPTable transactionTable = new PdfPTable(4);
+            transactionTable.setWidths(new float[]{3, 2, 2, 2});
+            transactionTable.addCell("Description");
+            transactionTable.addCell("Category");
+            transactionTable.addCell("Type");
+            transactionTable.addCell("Amount");
+
+            for (Transaction t : transactions) {
+                transactionTable.addCell(t.getDescription());
+                transactionTable.addCell(t.getCategory());
+                transactionTable.addCell(t.getType());
+                transactionTable.addCell(String.format("Rs. %.2f", t.getAmount()));
+            }
+            document.add(transactionTable);
+
+            document.close();
+            showInfo("Monthly report exported successfully.");
+
+        } catch (Exception ex) {
+            showAlert("Could not export report: " + ex.getMessage());
+        }
+    }
+    
+    private VBox createFinancialHealthSection() {
+        healthScoreLabel = new Label("Financial Health Score: Not calculated");
+        healthScoreLabel.setStyle("-fx-font-size: 22px; -fx-font-weight: bold;");
+
+        healthRecommendationLabel = new Label(
+            "Calculate your score to receive personalized financial recommendations.");
+        healthRecommendationLabel.setWrapText(true);
+
+        healthScoreButton = new Button("Calculate Financial Health");
+        healthScoreButton.setOnAction(e -> calculateFinancialHealth());
+
+        VBox section = new VBox(12,
+            sectionTitle("Financial Health Score & Recommendations"),
+            healthScoreLabel,
+            healthRecommendationLabel,
+            healthScoreButton);
+
+        styleSection(section);
+        return section;
+    }
+
+    private void calculateFinancialHealth() {
+        healthScoreButton.setDisable(true);
+        healthScoreLabel.setText("Calculating...");
+
+        try {
+            List<Transaction> transactions = dao.getAll();
+
+            double income = 0;
+            double expenses = 0;
+            Map<String, Double> categoryExpenses = new TreeMap<>();
+
+            for (Transaction t : transactions) {
+                if ("INCOME".equals(t.getType())) {
+                    income += t.getAmount();
+                } else {
+                    expenses += t.getAmount();
+                    categoryExpenses.merge(t.getCategory(),
+                        t.getAmount(), Double::sum);
+                }
+            }
+
+            if (income == 0 && expenses == 0) {
+                healthScoreLabel.setText("Financial Health Score: N/A");
+                healthRecommendationLabel.setText(
+                    "Add transactions before calculating your score.");
+                return;
+            }
+
+            double score = 0;
+            double savingsRate = income > 0
+                ? ((income - expenses) / income) * 100 : -100;
+
+            if (income > 0) {
+                score += Math.max(0, Math.min(40, savingsRate * 2));
+            }
+
+            if (income > 0) {
+                double expenseRatio = expenses / income;
+                score += Math.max(0, Math.min(30,
+                    (1 - expenseRatio) * 30));
+            }
+
+            List<BudgetDAO.BudgetSummary> budgets =
+                budgetDAO.getBudgets(
+                    String.format("%04d-%02d",
+                        LocalDate.now().getYear(),
+                        LocalDate.now().getMonthValue()));
+
+            if (!budgets.isEmpty()) {
+                long withinBudget = budgets.stream()
+                    .filter(b -> b.getSpent() <= b.getLimit())
+                    .count();
+
+                score += 30.0 * withinBudget / budgets.size();
+            } else {
+                score += 15;
+            }
+
+            int finalScore = (int) Math.round(Math.max(0, Math.min(100, score)));
+
+            String rating;
+            if (finalScore >= 80) rating = "Excellent";
+            else if (finalScore >= 60) rating = "Good";
+            else if (finalScore >= 40) rating = "Fair";
+            else rating = "Needs Improvement";
+
+            StringBuilder advice = new StringBuilder();
+            advice.append("Rating: ").append(rating).append("\n");
+            advice.append(String.format(
+                "Income: ₹%.2f | Expenses: ₹%.2f%n", income, expenses));
+            advice.append(String.format(
+                "Savings rate: %.1f%%%n", savingsRate));
+
+            if (income <= 0) {
+                advice.append(
+                    "• Record your income to calculate a meaningful savings rate.\n");
+            } else if (savingsRate < 0) {
+                advice.append(
+                    "• Your expenses exceed your income. Review non-essential spending.\n");
+            } else if (savingsRate < 20) {
+                advice.append(
+                    "• Consider setting a savings target and reducing discretionary expenses.\n");
+            } else {
+                advice.append(
+                    "• Good savings progress. Continue tracking your monthly spending.\n");
+            }
+
+            if (budgets.isEmpty()) {
+                advice.append(
+                    "• Create monthly budgets to monitor category-wise spending.\n");
+            } else {
+                for (BudgetDAO.BudgetSummary b : budgets) {
+                    if (b.getSpent() > b.getLimit()) {
+                        advice.append("• ").append(b.getCategory())
+                            .append(" is over budget. Review this category.\n");
+                    } else if (b.getSpent() >= b.getLimit() * 0.8) {
+                        advice.append("• ").append(b.getCategory())
+                            .append(" is approaching its budget limit.\n");
+                    }
+                }
+            }
+
+            healthScoreLabel.setText(
+                "Financial Health Score: " + finalScore + "/100 — " + rating);
+            healthRecommendationLabel.setText(advice.toString());
+
+        } catch (Exception ex) {
+            healthScoreLabel.setText("Could not calculate score");
+            healthRecommendationLabel.setText(ex.getMessage());
+        } finally {
+            healthScoreButton.setDisable(false);
+        }
+    }
 
     private void showAlert(String message) {
         Alert alert = new Alert(Alert.AlertType.ERROR);
