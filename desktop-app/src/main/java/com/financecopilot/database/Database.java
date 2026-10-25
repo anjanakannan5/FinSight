@@ -1,3 +1,4 @@
+
 package com.financecopilot.database;
 
 import java.sql.Connection;
@@ -24,7 +25,7 @@ public class Database {
     }
 
     public static void initialize() {
-        String sql = """
+        String transactionsSQL = """
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 description TEXT NOT NULL,
@@ -35,9 +36,20 @@ public class Database {
             )
             """;
 
+        String goalsSQL = """
+            CREATE TABLE IF NOT EXISTS savings_goals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                target_amount REAL NOT NULL CHECK(target_amount > 0),
+                saved_amount REAL NOT NULL DEFAULT 0 CHECK(saved_amount >= 0),
+                target_date TEXT NOT NULL
+            )
+            """;
+
         try (Connection con = connect();
              Statement stmt = con.createStatement()) {
-            stmt.execute(sql);
+            stmt.execute(transactionsSQL);
+            stmt.execute(goalsSQL);
             System.out.println("Database connected successfully.");
         } catch (Exception e) {
             throw new RuntimeException("Database initialization failed", e);

@@ -1,19 +1,50 @@
-
 package com.financecopilot;
 
 import com.financecopilot.database.Database;
+import com.financecopilot.models.SavingsGoal;
 import com.financecopilot.models.Transaction;
-import com.financecopilot.services.TransactionDAO;
 import com.financecopilot.services.AnalysisService;
+import com.financecopilot.services.SavingsGoalDAO;
+import com.financecopilot.services.TransactionDAO;
+import com.financecopilot.services.BudgetDAO;
+import com.financecopilot.services.RecurringTransactionDAO;
+
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
-import javafx.scene.chart.*;
-import javafx.scene.control.*;
-import javafx.scene.layout.*;
+import javafx.scene.chart.BarChart;
+import javafx.scene.chart.CategoryAxis;
+import javafx.scene.chart.NumberAxis;
+import javafx.scene.chart.PieChart;
+import javafx.scene.chart.XYChart;
+import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.DatePicker;
+import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
+import javafx.scene.control.ListView;
+import javafx.scene.control.ProgressBar;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.Separator;
+import javafx.scene.control.TableColumn;
+import javafx.scene.control.TableView;
+import javafx.scene.control.TextField;
+import javafx.scene.layout.ColumnConstraints;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.VBox;
+import javafx.scene.control.Spinner;
 import javafx.stage.Stage;
+import javafx.beans.property.SimpleStringProperty;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -27,15 +58,26 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import org.json.JSONArray;
-import org.json.JSONObject;
+import javafx.stage.FileChooser;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.BufferedWriter;
 
 public class MainApp extends Application {
 
     private final TransactionDAO dao = new TransactionDAO();
     private final AnalysisService analysisService = new AnalysisService();
+    private final SavingsGoalDAO savingsGoalDAO = new SavingsGoalDAO();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final HttpClient httpClient = HttpClient.newHttpClient();
+
+    private static final String API_URL = "http://127.0.0.1:5000";
+
+    private final String[] months = {
+        "January", "February", "March", "April",
+        "May", "June", "July", "August",
+        "September", "October", "November", "December"
+    };
 
     private final TableView<Transaction> table = new TableView<>();
     private final Label incomeLabel = new Label("₹0.00");
@@ -75,13 +117,35 @@ public class MainApp extends Application {
     private Label comparisonStatus;
     private Button compareButton;
 
-    private static final String API_URL = "http://127.0.0.1:5000";
+    private Label totalGoalsLabel;
+    private Label totalTargetLabel;
+    private Label totalSavedLabel;
+    private Label overallProgressLabel;
+    private ProgressBar overallProgressBar;
 
-    private final String[] months = {
-        "January", "February", "March", "April",
-        "May", "June", "July", "August",
-        "September", "October", "November", "December"
-    };
+    private ListView<SavingsGoal> goalsList;
+    private TextField goalNameField;
+    private TextField goalTargetField;
+    private TextField contributionField;
+    private DatePicker goalDatePicker;
+    private Label goalsStatus;
+    private Button addGoalButton;
+    private Button contributeButton;
+    private Button deleteGoalButton;
+
+    private final BudgetDAO budgetDAO = new BudgetDAO();
+    private TableView<BudgetDAO.BudgetSummary> budgetTable;
+    private TextField budgetCategoryField;
+    private TextField budgetLimitField;
+    private ComboBox<String> budgetMonthSelector;
+    private Label budgetStatus;
+
+    private final RecurringTransactionDAO recurringDAO = new RecurringTransactionDAO();
+    private TableView<RecurringTransactionDAO.Rule> recurringTable;
+    private TextField recurringDescription, recurringCategory, recurringAmount;
+    private ComboBox<String> recurringType;
+    private Spinner<Integer> recurringDay;
+    private Label recurringStatus;
 
     @Override
     public void start(Stage stage) {
@@ -93,15 +157,13 @@ public class MainApp extends Application {
         Label subtitle = new Label("Your personal finance dashboard");
         subtitle.setStyle("-fx-font-size: 14px; -fx-text-fill: #666666;");
 
-        HBox summary = new HBox(15,
+        HBox summary = new HBox(
+            15,
             createCard("Total Income", incomeLabel),
             createCard("Total Expenses", expenseLabel),
             createCard("Balance", balanceLabel)
         );
         summary.setPadding(new Insets(15, 0, 15, 0));
-
-        Label monthlyTitle = new Label("Monthly Financial Analysis");
-        monthlyTitle.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
 
         monthSelector = new ComboBox<>();
         monthSelector.getItems().addAll(months);
@@ -113,11 +175,15 @@ public class MainApp extends Application {
             yearSelector.getItems().add(year);
         }
 
-        monthSelector.setValue(LocalDate.now().getMonth()
-            .getDisplayName(TextStyle.FULL, Locale.ENGLISH));
+        monthSelector.setValue(
+            LocalDate.now().getMonth().getDisplayName(
+                TextStyle.FULL, Locale.ENGLISH
+            )
+        );
         yearSelector.setValue(currentYear);
 
-        HBox monthControls = new HBox(10,
+        HBox monthControls = new HBox(
+            10,
             new Label("Month:"), monthSelector,
             new Label("Year:"), yearSelector
         );
@@ -126,12 +192,16 @@ public class MainApp extends Application {
         monthlyExpenseLabel = new Label("Expenses: ₹0.00");
         monthlyBalanceLabel = new Label("Balance: ₹0.00");
 
-        HBox monthlySummary = new HBox(25,
-            monthlyIncomeLabel, monthlyExpenseLabel, monthlyBalanceLabel
+        HBox monthlySummary = new HBox(
+            25,
+            monthlyIncomeLabel,
+            monthlyExpenseLabel,
+            monthlyBalanceLabel
         );
 
-        VBox monthlySection = new VBox(12,
-            monthlyTitle,
+        VBox monthlySection = new VBox(
+            12,
+            sectionTitle("Monthly Financial Analysis"),
             new Label("Select a month and year to view its financial summary"),
             monthControls,
             monthlySummary
@@ -150,6 +220,8 @@ public class MainApp extends Application {
         VBox aiSection = createAIAnalysisSection();
         VBox insightsSection = createInsightsSection();
         VBox comparisonSection = createComparisonSection();
+        VBox savingsGoalsSection = createSavingsGoalsSection();
+        VBox budgetSection = createBudgetSection();
 
         TextField description = new TextField();
         description.setPromptText("Description");
@@ -176,15 +248,15 @@ public class MainApp extends Application {
             try {
                 String desc = description.getText().trim();
                 String cat = category.getText().trim();
+                String amountText = amount.getText().trim();
 
                 if (desc.isEmpty() || cat.isEmpty()
-                    || amount.getText().trim().isEmpty()
-                    || date.getValue() == null) {
+                    || amountText.isEmpty() || date.getValue() == null) {
                     showAlert("Please enter all transaction details.");
                     return;
                 }
 
-                double value = Double.parseDouble(amount.getText().trim());
+                double value = Double.parseDouble(amountText);
 
                 if (!Double.isFinite(value) || value <= 0) {
                     showAlert("Amount must be a positive number.");
@@ -216,6 +288,7 @@ public class MainApp extends Application {
         GridPane form = new GridPane();
         form.setHgap(10);
         form.setVgap(10);
+
         form.add(description, 0, 0);
         form.add(category, 1, 0);
         form.add(type, 2, 0);
@@ -243,6 +316,7 @@ public class MainApp extends Application {
         searchField.textProperty().addListener(
             (obs, oldValue, newValue) -> filterTransactions()
         );
+
         filterType.setOnAction(e -> filterTransactions());
 
         resetButton.setOnAction(e -> {
@@ -254,19 +328,32 @@ public class MainApp extends Application {
         Button deleteButton = new Button("Delete Selected Transaction");
         deleteButton.setOnAction(e -> deleteTransaction());
 
-        Label formTitle = new Label("Add a Transaction");
-        formTitle.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
+        Button exportButton = new Button("Export Transactions to CSV");
+        exportButton.setOnAction(e -> exportTransactions());
 
-        Label historyTitle = new Label("Transaction History");
-        historyTitle.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
+        VBox recurringSection = createRecurringSection();
 
-        VBox content = new VBox(15,
-            heading, subtitle, summary,
-            monthlySection, chartsSection,
-            aiSection, insightsSection, comparisonSection,
-            formTitle, form, historyTitle,
-            searchBar, table, deleteButton
+        VBox content = new VBox(
+            15,
+            heading,
+            subtitle,
+            summary,
+            monthlySection,
+            chartsSection,
+            aiSection,
+            insightsSection,
+            comparisonSection,
+            savingsGoalsSection,
+            budgetSection,
+            recurringSection,
+            sectionTitle("Add a Transaction"),
+            form,
+            sectionTitle("Transaction History"),
+            searchBar,
+            table,
+            new HBox(10, deleteButton, exportButton)
         );
+
         content.setPadding(new Insets(25));
         content.setStyle("-fx-background-color: #F5F7FB;");
 
@@ -284,6 +371,12 @@ public class MainApp extends Application {
         loadTransactions();
     }
 
+    private Label sectionTitle(String text) {
+        Label label = new Label(text);
+        label.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
+        return label;
+    }
+
     private void styleSection(VBox section) {
         section.setPadding(new Insets(15));
         section.setStyle(
@@ -292,9 +385,6 @@ public class MainApp extends Application {
     }
 
     private VBox createAIAnalysisSection() {
-        Label title = new Label("Python Financial Analysis");
-        title.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
-
         aiIncomeLabel = new Label("Total Income: —");
         aiExpenseLabel = new Label("Total Expenses: —");
         aiBalanceLabel = new Label("Balance: —");
@@ -307,9 +397,14 @@ public class MainApp extends Application {
         analyzeButton = new Button("Refresh Analysis");
         analyzeButton.setOnAction(e -> refreshAIAnalysis());
 
-        VBox section = new VBox(10,
-            title, aiIncomeLabel, aiExpenseLabel, aiBalanceLabel,
-            aiSavingsLabel, aiCategoryLabel,
+        VBox section = new VBox(
+            10,
+            sectionTitle("Python Financial Analysis"),
+            aiIncomeLabel,
+            aiExpenseLabel,
+            aiBalanceLabel,
+            aiSavingsLabel,
+            aiCategoryLabel,
             new HBox(12, analyzeButton, aiStatusLabel)
         );
 
@@ -318,13 +413,14 @@ public class MainApp extends Application {
     }
 
     private VBox createInsightsSection() {
-        Label title = new Label("Spending Insights & Unusual Expenses");
-        title.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
-
-        insightsContent = new Label("Click the button to load spending insights.");
+        insightsContent = new Label(
+            "Click the button to load spending insights."
+        );
         insightsContent.setWrapText(true);
 
-        anomalyContent = new Label("Unusual expense results will appear here.");
+        anomalyContent = new Label(
+            "Unusual expense results will appear here."
+        );
         anomalyContent.setWrapText(true);
 
         insightsStatus = new Label("Python service status: not checked");
@@ -332,12 +428,16 @@ public class MainApp extends Application {
         insightsButton = new Button("Refresh Spending Insights");
         insightsButton.setOnAction(e -> refreshInsights());
 
-        VBox section = new VBox(12,
-            title, insightsContent,
+        VBox section = new VBox(
+            12,
+            sectionTitle("Spending Insights & Unusual Expenses"),
+            insightsButton,
+            insightsStatus,
+            new Label("Spending insights"),
+            insightsContent,
             new Separator(),
-            new Label("Unusual Expense Detection"),
-            anomalyContent,
-            new HBox(12, insightsButton, insightsStatus)
+            new Label("Unusual expense detection"),
+            anomalyContent
         );
 
         styleSection(section);
@@ -345,9 +445,6 @@ public class MainApp extends Application {
     }
 
     private VBox createComparisonSection() {
-        Label title = new Label("Month-to-Month Comparison");
-        title.setStyle("-fx-font-size: 18px; -fx-font-weight: bold;");
-
         int currentYear = LocalDate.now().getYear();
 
         compareMonth1 = new ComboBox<>();
@@ -366,20 +463,21 @@ public class MainApp extends Application {
         LocalDate now = LocalDate.now();
         LocalDate previous = now.minusMonths(1);
 
-        compareMonth1.setValue(previous.getMonth()
-            .getDisplayName(TextStyle.FULL, Locale.ENGLISH));
+        compareMonth1.setValue(
+            previous.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH)
+        );
         compareYear1.setValue(previous.getYear());
 
-        compareMonth2.setValue(now.getMonth()
-            .getDisplayName(TextStyle.FULL, Locale.ENGLISH));
+        compareMonth2.setValue(
+            now.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH)
+        );
         compareYear2.setValue(now.getYear());
 
-        HBox firstRow = new HBox(10,
-            new Label("First month:"), compareMonth1, compareYear1
+        HBox firstRow = new HBox(
+            10, new Label("First month:"), compareMonth1, compareYear1
         );
-
-        HBox secondRow = new HBox(10,
-            new Label("Second month:"), compareMonth2, compareYear2
+        HBox secondRow = new HBox(
+            10, new Label("Second month:"), compareMonth2, compareYear2
         );
 
         comparisonContent = new Label("Select two months and compare.");
@@ -389,12 +487,148 @@ public class MainApp extends Application {
         compareButton = new Button("Compare Months");
         compareButton.setOnAction(e -> compareMonths());
 
-        VBox section = new VBox(12,
-            title, firstRow, secondRow,
-            compareButton, comparisonStatus, comparisonContent
+        VBox section = new VBox(
+            12,
+            sectionTitle("Month-to-Month Comparison"),
+            firstRow,
+            secondRow,
+            compareButton,
+            comparisonStatus,
+            comparisonContent
         );
 
         styleSection(section);
+        return section;
+    }
+
+    private VBox createSavingsGoalsSection() {
+        totalGoalsLabel = new Label("Total Goals: 0");
+        totalTargetLabel = new Label("Total Target: ₹0.00");
+        totalSavedLabel = new Label("Total Saved: ₹0.00");
+
+        overallProgressLabel = new Label("Overall Progress: 0.0%");
+        overallProgressBar = new ProgressBar(0);
+        overallProgressBar.setMaxWidth(Double.MAX_VALUE);
+
+        HBox goalSummary = new HBox(
+            20, totalGoalsLabel, totalTargetLabel, totalSavedLabel
+        );
+
+        goalNameField = new TextField();
+        goalNameField.setPromptText("Goal name (e.g. Laptop)");
+
+        goalTargetField = new TextField();
+        goalTargetField.setPromptText("Target amount (₹)");
+
+        goalDatePicker = new DatePicker(LocalDate.now().plusMonths(6));
+
+        addGoalButton = new Button("Create Goal");
+        addGoalButton.setStyle(
+            "-fx-background-color: #2457C5; -fx-text-fill: white;"
+        );
+        addGoalButton.setOnAction(e -> addSavingsGoal());
+
+        GridPane goalForm = new GridPane();
+        goalForm.setHgap(10);
+        goalForm.setVgap(10);
+
+        goalForm.add(goalNameField, 0, 0);
+        goalForm.add(goalTargetField, 1, 0);
+        goalForm.add(goalDatePicker, 2, 0);
+        goalForm.add(addGoalButton, 0, 1);
+
+        goalForm.getColumnConstraints().addAll(
+            new ColumnConstraints(180),
+            new ColumnConstraints(160),
+            new ColumnConstraints(160)
+        );
+
+        goalsList = new ListView<>();
+        goalsList.setPrefHeight(230);
+
+        goalsList.setCellFactory(list -> new ListCell<>() {
+            @Override
+            protected void updateItem(SavingsGoal goal, boolean empty) {
+                super.updateItem(goal, empty);
+
+                if (empty || goal == null) {
+                    setGraphic(null);
+                    setText(null);
+                    return;
+                }
+
+                Label name = new Label(goal.getName());
+                name.setStyle(
+                    "-fx-font-size: 15px; -fx-font-weight: bold;"
+                );
+
+                Label amounts = new Label(String.format(
+                    "Saved: ₹%.2f / ₹%.2f    Remaining: ₹%.2f",
+                    goal.getSavedAmount(),
+                    goal.getTargetAmount(),
+                    goal.getRemainingAmount()
+                ));
+
+                ProgressBar progress = new ProgressBar(goal.getProgress());
+                progress.setMaxWidth(Double.MAX_VALUE);
+
+                Label percentage = new Label(String.format(
+                    "%.1f%% complete", goal.getProgress() * 100
+                ));
+
+                Label deadline = new Label(
+                    "Target date: " + goal.getTargetDate()
+                    + (goal.isCompleted() ? "  |  Completed" : "")
+                );
+
+                VBox details = new VBox(
+                    5, name, amounts, progress, percentage, deadline
+                );
+                details.setPadding(new Insets(8));
+                details.setStyle(
+                    "-fx-background-color: #F5F7FB; -fx-background-radius: 8;"
+                );
+
+                setGraphic(details);
+            }
+        });
+
+        contributionField = new TextField();
+        contributionField.setPromptText("Contribution amount (₹)");
+        contributionField.setPrefWidth(200);
+
+        contributeButton = new Button("Add Savings");
+        contributeButton.setOnAction(e -> addSavingsContribution());
+
+        deleteGoalButton = new Button("Delete Selected Goal");
+        deleteGoalButton.setOnAction(e -> deleteSavingsGoal());
+
+        goalsStatus = new Label(
+            "Create a goal to start tracking your savings."
+        );
+        goalsStatus.setWrapText(true);
+
+        HBox contributionRow = new HBox(
+            10, contributionField, contributeButton, deleteGoalButton
+        );
+
+        VBox section = new VBox(
+            12,
+            sectionTitle("Financial Goals & Savings Tracker"),
+            goalSummary,
+            overallProgressLabel,
+            overallProgressBar,
+            new Label("Create a savings goal"),
+            goalForm,
+            new Separator(),
+            new Label("Your savings goals"),
+            goalsList,
+            contributionRow,
+            goalsStatus
+        );
+
+        styleSection(section);
+        reloadSavingsGoals();
         return section;
     }
 
@@ -459,14 +693,17 @@ public class MainApp extends Application {
 
                 if (transactions.isEmpty()) {
                     Platform.runLater(() -> {
-                        aiStatusLabel.setText("Add transactions before analyzing.");
+                        aiStatusLabel.setText(
+                            "Add transactions before analyzing."
+                        );
                         analyzeButton.setDisable(false);
                     });
                     return;
                 }
 
-                String response = analysisService.analyzeTransactions(transactions);
-                JSONObject result = new JSONObject(response);
+                JSONObject result = new JSONObject(
+                    analysisService.analyzeTransactions(transactions)
+                );
 
                 Platform.runLater(() -> {
                     aiIncomeLabel.setText(String.format(
@@ -514,7 +751,9 @@ public class MainApp extends Application {
 
                 if (transactions.isEmpty()) {
                     Platform.runLater(() -> {
-                        insightsContent.setText("Add transactions before analysis.");
+                        insightsContent.setText(
+                            "Add transactions before analysis."
+                        );
                         anomalyContent.setText("No transactions available.");
                         insightsStatus.setText("No transactions");
                         insightsButton.setDisable(false);
@@ -522,8 +761,8 @@ public class MainApp extends Application {
                     return;
                 }
 
-                JSONObject body = transactionRequest(transactions);
-                JSONObject insights = postJson("/insights", body);
+                JSONObject requestBody = transactionRequest(transactions);
+                JSONObject insights = postJson("/insights", requestBody);
                 JSONObject anomalies = postJson(
                     "/detect-anomalies", transactionRequest(transactions)
                 );
@@ -543,7 +782,6 @@ public class MainApp extends Application {
                 ));
 
                 insightText.append("Category spending alerts:\n");
-
                 JSONArray alerts = insights.optJSONArray("alerts");
 
                 if (alerts == null || alerts.length() == 0) {
@@ -603,21 +841,24 @@ public class MainApp extends Application {
     }
 
     private void compareMonths() {
-        if (compareMonth1.getValue() == null || compareYear1.getValue() == null
-            || compareMonth2.getValue() == null || compareYear2.getValue() == null) {
+        if (compareMonth1.getValue() == null
+            || compareYear1.getValue() == null
+            || compareMonth2.getValue() == null
+            || compareYear2.getValue() == null) {
             comparisonStatus.setText("Select both months and years.");
             return;
         }
 
-        int firstMonthNumber = compareMonth1.getSelectionModel().getSelectedIndex() + 1;
-        int secondMonthNumber = compareMonth2.getSelectionModel().getSelectedIndex() + 1;
-
         String first = String.format(
-            "%04d-%02d", compareYear1.getValue(), firstMonthNumber
+            "%04d-%02d",
+            compareYear1.getValue(),
+            compareMonth1.getSelectionModel().getSelectedIndex() + 1
         );
 
         String second = String.format(
-            "%04d-%02d", compareYear2.getValue(), secondMonthNumber
+            "%04d-%02d",
+            compareYear2.getValue(),
+            compareMonth2.getSelectionModel().getSelectedIndex() + 1
         );
 
         if (first.equals(second)) {
@@ -630,14 +871,13 @@ public class MainApp extends Application {
 
         executor.submit(() -> {
             try {
-                List<Transaction> transactions = dao.getAll();
-                JSONObject body = transactionRequest(transactions);
+                JSONObject body = transactionRequest(dao.getAll());
                 body.put("month1", first);
                 body.put("month2", second);
 
                 JSONObject result = postJson("/compare", body);
-                JSONObject firstMonth = result.getJSONObject("month1");
-                JSONObject secondMonth = result.getJSONObject("month2");
+                JSONObject m1 = result.getJSONObject("month1");
+                JSONObject m2 = result.getJSONObject("month2");
                 JSONObject changes = result.getJSONObject("changes");
 
                 String output = String.format(
@@ -648,13 +888,13 @@ public class MainApp extends Application {
                     + "Balance change: %s%n"
                     + "Spending trend: %s",
                     first,
-                    firstMonth.optDouble("income", 0),
-                    firstMonth.optDouble("expenses", 0),
-                    firstMonth.optDouble("balance", 0),
+                    m1.optDouble("income", 0),
+                    m1.optDouble("expenses", 0),
+                    m1.optDouble("balance", 0),
                     second,
-                    secondMonth.optDouble("income", 0),
-                    secondMonth.optDouble("expenses", 0),
-                    secondMonth.optDouble("balance", 0),
+                    m2.optDouble("income", 0),
+                    m2.optDouble("expenses", 0),
+                    m2.optDouble("balance", 0),
                     formatChange(changes.getJSONObject("income")),
                     formatChange(changes.getJSONObject("expenses")),
                     formatChange(changes.getJSONObject("balance")),
@@ -681,7 +921,6 @@ public class MainApp extends Application {
     private String formatChange(JSONObject change) {
         double amount = change.optDouble("amount", 0);
         Object percentage = change.opt("percentage");
-
         String percentText;
 
         if (percentage == null || percentage == JSONObject.NULL) {
@@ -781,7 +1020,9 @@ public class MainApp extends Application {
             descriptionCol, categoryCol, typeCol, amountCol, dateCol
         );
 
-        table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        table.setColumnResizePolicy(
+            TableView.CONSTRAINED_RESIZE_POLICY
+        );
         table.setPrefHeight(300);
     }
 
@@ -796,8 +1037,10 @@ public class MainApp extends Application {
             )
             .filter(t ->
                 "All".equals(filter)
-                || ("Income".equals(filter) && t.getType().equals("INCOME"))
-                || ("Expenses".equals(filter) && t.getType().equals("EXPENSE"))
+                || ("Income".equals(filter)
+                    && t.getType().equals("INCOME"))
+                || ("Expenses".equals(filter)
+                    && t.getType().equals("EXPENSE"))
             )
             .toList();
 
@@ -805,7 +1048,8 @@ public class MainApp extends Application {
     }
 
     private void deleteTransaction() {
-        Transaction selected = table.getSelectionModel().getSelectedItem();
+        Transaction selected =
+            table.getSelectionModel().getSelectedItem();
 
         if (selected == null) {
             showAlert("Please select a transaction to delete.");
@@ -814,7 +1058,9 @@ public class MainApp extends Application {
 
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("Delete Transaction");
-        confirm.setHeaderText("Delete " + selected.getDescription() + "?");
+        confirm.setHeaderText(
+            "Delete " + selected.getDescription() + "?"
+        );
         confirm.setContentText("This action cannot be undone.");
 
         confirm.showAndWait().ifPresent(response -> {
@@ -823,7 +1069,9 @@ public class MainApp extends Application {
                     dao.delete(selected.getId());
                     loadTransactions();
                 } catch (Exception ex) {
-                    showAlert("Could not delete transaction: " + ex.getMessage());
+                    showAlert(
+                        "Could not delete transaction: " + ex.getMessage()
+                    );
                 }
             }
         });
@@ -918,12 +1166,539 @@ public class MainApp extends Application {
                 );
             }
 
-            expensePieChart.setData(FXCollections.observableArrayList(pieData));
+            expensePieChart.setData(
+                FXCollections.observableArrayList(pieData)
+            );
 
         } catch (Exception ex) {
             showAlert("Could not load monthly analysis: " + ex.getMessage());
         }
     }
+
+    private void addSavingsGoal() {
+        try {
+            String name = goalNameField.getText().trim();
+            String targetText = goalTargetField.getText().trim();
+            LocalDate targetDate = goalDatePicker.getValue();
+
+            if (name.isEmpty() || targetText.isEmpty() || targetDate == null) {
+                goalsStatus.setText(
+                    "Enter the goal name, target amount and date."
+                );
+                return;
+            }
+
+            double target = Double.parseDouble(targetText);
+
+            if (!Double.isFinite(target) || target <= 0) {
+                goalsStatus.setText(
+                    "Target amount must be a positive number."
+                );
+                return;
+            }
+
+            if (targetDate.isBefore(LocalDate.now())) {
+                goalsStatus.setText("Target date cannot be in the past.");
+                return;
+            }
+
+            addGoalButton.setDisable(true);
+            savingsGoalDAO.addGoal(name, target, targetDate.toString());
+
+            goalNameField.clear();
+            goalTargetField.clear();
+            goalDatePicker.setValue(LocalDate.now().plusMonths(6));
+
+            reloadSavingsGoals();
+            goalsStatus.setText("Savings goal created successfully.");
+
+        } catch (NumberFormatException ex) {
+            goalsStatus.setText("Enter a valid target amount.");
+        } catch (Exception ex) {
+            goalsStatus.setText(
+                "Could not create goal: " + ex.getMessage()
+            );
+        } finally {
+            addGoalButton.setDisable(false);
+        }
+    }
+
+    private void addSavingsContribution() {
+        SavingsGoal selected =
+            goalsList.getSelectionModel().getSelectedItem();
+
+        if (selected == null) {
+            goalsStatus.setText("Select a savings goal first.");
+            return;
+        }
+
+        try {
+            String text = contributionField.getText().trim();
+
+            if (text.isEmpty()) {
+                goalsStatus.setText("Enter a contribution amount.");
+                return;
+            }
+
+            double amount = Double.parseDouble(text);
+
+            if (!Double.isFinite(amount) || amount <= 0) {
+                goalsStatus.setText(
+                    "Contribution must be a positive number."
+                );
+                return;
+            }
+
+            savingsGoalDAO.addSavings(selected.getId(), amount);
+            contributionField.clear();
+            reloadSavingsGoals();
+
+            goalsStatus.setText(
+                "₹" + String.format("%.2f", amount)
+                + " added to " + selected.getName() + "."
+            );
+
+        } catch (NumberFormatException ex) {
+            goalsStatus.setText("Enter a valid contribution amount.");
+        } catch (Exception ex) {
+            goalsStatus.setText(
+                "Could not add savings: " + ex.getMessage()
+            );
+        }
+    }
+
+    private void deleteSavingsGoal() {
+        SavingsGoal selected =
+            goalsList.getSelectionModel().getSelectedItem();
+
+        if (selected == null) {
+            goalsStatus.setText("Select a goal to delete.");
+            return;
+        }
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Delete Savings Goal");
+        confirm.setHeaderText("Delete " + selected.getName() + "?");
+        confirm.setContentText("This will permanently remove this goal.");
+
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                try {
+                    savingsGoalDAO.deleteGoal(selected.getId());
+                    reloadSavingsGoals();
+                    goalsStatus.setText("Savings goal deleted.");
+                } catch (Exception ex) {
+                    goalsStatus.setText(
+                        "Could not delete goal: " + ex.getMessage()
+                    );
+                }
+            }
+        });
+    }
+
+    private void reloadSavingsGoals() {
+        if (goalsList == null) {
+            return;
+        }
+
+        try {
+            List<SavingsGoal> goals = savingsGoalDAO.getAllGoals();
+            goalsList.setItems(FXCollections.observableArrayList(goals));
+
+            double totalTarget = 0;
+            double totalSaved = 0;
+
+            for (SavingsGoal goal : goals) {
+                totalTarget += goal.getTargetAmount();
+                totalSaved += goal.getSavedAmount();
+            }
+
+            double progress = totalTarget > 0
+                ? Math.min(1.0, totalSaved / totalTarget)
+                : 0;
+
+            totalGoalsLabel.setText("Total Goals: " + goals.size());
+            totalTargetLabel.setText(String.format(
+                "Total Target: ₹%.2f", totalTarget
+            ));
+            totalSavedLabel.setText(String.format(
+                "Total Saved: ₹%.2f", totalSaved
+            ));
+
+            overallProgressLabel.setText(String.format(
+                "Overall Progress: %.1f%%", progress * 100
+            ));
+            overallProgressBar.setProgress(progress);
+
+            if (goals.isEmpty()) {
+                goalsStatus.setText(
+                    "No goals yet. Create your first savings goal."
+                );
+            }
+
+        } catch (Exception ex) {
+            goalsStatus.setText(
+                "Could not load goals: " + ex.getMessage()
+            );
+        }
+    }
+
+    
+    private VBox createBudgetSection() {
+        budgetCategoryField = new TextField();
+        budgetCategoryField.setPromptText("Category (e.g. Food)");
+
+        budgetLimitField = new TextField();
+        budgetLimitField.setPromptText("Monthly limit (₹)");
+
+        budgetMonthSelector = new ComboBox<>();
+        budgetMonthSelector.getItems().addAll(months);
+        budgetMonthSelector.setValue(
+            LocalDate.now().getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH));
+
+        ComboBox<Integer> budgetYearSelector = new ComboBox<>();
+        int currentYear = LocalDate.now().getYear();
+        for (int y = currentYear - 5; y <= currentYear + 1; y++)
+            budgetYearSelector.getItems().add(y);
+        budgetYearSelector.setValue(currentYear);
+
+        budgetTable = new TableView<>();
+        budgetTable.setPrefHeight(250);
+
+        TableColumn<BudgetDAO.BudgetSummary, String> categoryCol =
+            new TableColumn<>("Category");
+        categoryCol.setCellValueFactory(d ->
+            new SimpleStringProperty(d.getValue().getCategory()));
+
+        TableColumn<BudgetDAO.BudgetSummary, String> limitCol =
+            new TableColumn<>("Budget");
+        limitCol.setCellValueFactory(d ->
+            new SimpleStringProperty(String.format("₹%.2f", d.getValue().getLimit())));
+
+        TableColumn<BudgetDAO.BudgetSummary, String> spentCol =
+            new TableColumn<>("Spent");
+        spentCol.setCellValueFactory(d ->
+            new SimpleStringProperty(String.format("₹%.2f", d.getValue().getSpent())));
+
+        TableColumn<BudgetDAO.BudgetSummary, String> remainingCol =
+            new TableColumn<>("Remaining");
+        remainingCol.setCellValueFactory(d ->
+            new SimpleStringProperty(String.format("₹%.2f", d.getValue().getRemaining())));
+
+        TableColumn<BudgetDAO.BudgetSummary, String> progressCol =
+            new TableColumn<>("Progress");
+        progressCol.setCellValueFactory(d ->
+            new SimpleStringProperty(String.format("%.1f%%",
+                d.getValue().getProgress() * 100)));
+
+        TableColumn<BudgetDAO.BudgetSummary, String> statusCol =
+            new TableColumn<>("Status");
+        statusCol.setCellValueFactory(d ->
+            new SimpleStringProperty(d.getValue().getStatus()));
+
+        budgetTable.getColumns().addAll(categoryCol, limitCol, spentCol,
+            remainingCol, progressCol, statusCol);
+        budgetTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+
+        budgetStatus = new Label("Set a monthly spending limit for each category.");
+        budgetStatus.setWrapText(true);
+
+        Button saveBudgetButton = new Button("Save Budget");
+        saveBudgetButton.setOnAction(e -> {
+            try {
+                String category = budgetCategoryField.getText().trim();
+                if (category.isEmpty() || budgetLimitField.getText().trim().isEmpty()) {
+                    budgetStatus.setText("Enter a category and budget amount.");
+                    return;
+                }
+
+                double limit = Double.parseDouble(budgetLimitField.getText().trim());
+                if (!Double.isFinite(limit) || limit <= 0) {
+                    budgetStatus.setText("Budget must be a positive number.");
+                    return;
+                }
+
+                String month = String.format("%04d-%02d",
+                    budgetYearSelector.getValue(),
+                    budgetMonthSelector.getSelectionModel().getSelectedIndex() + 1);
+
+                budgetDAO.saveBudget(category, month, limit);
+                budgetCategoryField.clear();
+                budgetLimitField.clear();
+                loadBudgets(budgetYearSelector.getValue(),
+                    budgetMonthSelector.getSelectionModel().getSelectedIndex() + 1);
+                budgetStatus.setText("Budget saved successfully.");
+            } catch (NumberFormatException ex) {
+                budgetStatus.setText("Enter a valid budget amount.");
+            } catch (Exception ex) {
+                budgetStatus.setText("Could not save budget: " + ex.getMessage());
+            }
+        });
+
+        Button deleteBudgetButton = new Button("Delete Selected Budget");
+        deleteBudgetButton.setOnAction(e -> {
+            BudgetDAO.BudgetSummary selected =
+                budgetTable.getSelectionModel().getSelectedItem();
+
+            if (selected == null) {
+                budgetStatus.setText("Select a budget to delete.");
+                return;
+            }
+
+            try {
+                budgetDAO.deleteBudget(selected.getId());
+                loadBudgets(budgetYearSelector.getValue(),
+                    budgetMonthSelector.getSelectionModel().getSelectedIndex() + 1);
+                budgetStatus.setText("Budget deleted.");
+            } catch (Exception ex) {
+                budgetStatus.setText("Could not delete budget: " + ex.getMessage());
+            }
+        });
+
+        Runnable reload = () -> loadBudgets(
+            budgetYearSelector.getValue(),
+            budgetMonthSelector.getSelectionModel().getSelectedIndex() + 1);
+
+        budgetMonthSelector.setOnAction(e -> reload.run());
+        budgetYearSelector.setOnAction(e -> reload.run());
+
+        HBox form = new HBox(10, budgetCategoryField, budgetLimitField,
+            budgetMonthSelector, budgetYearSelector, saveBudgetButton);
+
+        VBox section = new VBox(12,
+            sectionTitle("Budget Planning & Alerts"),
+            new Label("Set a monthly spending limit for each expense category."),
+            form, budgetTable, deleteBudgetButton, budgetStatus);
+
+        styleSection(section);
+        loadBudgets(currentYear, LocalDate.now().getMonthValue());
+        return section;
+    }
+
+    private void loadBudgets(int year, int month) {
+        try {
+            String selectedMonth = String.format("%04d-%02d", year, month);
+            List<BudgetDAO.BudgetSummary> budgets =
+                budgetDAO.getBudgets(selectedMonth);
+
+            budgetTable.setItems(FXCollections.observableArrayList(budgets));
+
+            long over = budgets.stream()
+                .filter(b -> b.getSpent() > b.getLimit()).count();
+            long near = budgets.stream()
+                .filter(b -> b.getSpent() >= b.getLimit() * 0.8
+                    && b.getSpent() <= b.getLimit()).count();
+
+            budgetStatus.setText("Budgets: " + budgets.size()
+                + " | Near limit: " + near
+                + " | Over budget: " + over
+                + "\nA warning is shown at 80% spending or above.");
+        } catch (Exception ex) {
+            budgetStatus.setText("Could not load budgets: " + ex.getMessage());
+        }
+    }
+
+
+    private void exportTransactions() {
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Export Transactions");
+        chooser.setInitialFileName("finance_transactions.csv");
+        chooser.getExtensionFilters().add(
+            new FileChooser.ExtensionFilter("CSV Files", "*.csv"));
+
+        File file = chooser.showSaveDialog(table.getScene().getWindow());
+        if (file == null) return;
+
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file))) {
+            writer.write("ID,Description,Category,Type,Amount,Date");
+            writer.newLine();
+
+            for (Transaction t : allTransactions) {
+                writer.write(t.getId() + ","
+                    + csvEscape(t.getDescription()) + ","
+                    + csvEscape(t.getCategory()) + ","
+                    + csvEscape(t.getType()) + ","
+                    + t.getAmount() + ","
+                    + csvEscape(t.getDate()));
+                writer.newLine();
+            }
+
+            showInfo("Export successful. Transactions exported: "
+                + allTransactions.size());
+        } catch (Exception ex) {
+            showAlert("Could not export transactions: " + ex.getMessage());
+        }
+    }
+
+    private String csvEscape(String value) {
+        if (value == null) return "";
+        return "\"" + value.replace("\"", "\"\"") + "\"";
+    }
+
+    private void showInfo(String message) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("Finance Copilot");
+        alert.setHeaderText(null);
+        alert.setContentText(message);
+        alert.showAndWait();
+    }
+
+    private VBox createRecurringSection() {
+        recurringDescription = new TextField();
+        recurringDescription.setPromptText("Description (e.g. Internet Bill)");
+
+        recurringCategory = new TextField();
+        recurringCategory.setPromptText("Category (e.g. Bills)");
+
+        recurringType = new ComboBox<>();
+        recurringType.getItems().addAll("INCOME", "EXPENSE");
+        recurringType.setValue("EXPENSE");
+
+        recurringAmount = new TextField();
+        recurringAmount.setPromptText("Amount (₹)");
+
+        recurringDay = new Spinner<>(1, 31, 1);
+        recurringDay.setEditable(true);
+
+        recurringTable = new TableView<>();
+        recurringTable.setPrefHeight(220);
+
+        TableColumn<RecurringTransactionDAO.Rule, String> descCol =
+            new TableColumn<>("Description");
+        descCol.setCellValueFactory(d ->
+            new javafx.beans.property.SimpleStringProperty(d.getValue().getDescription()));
+
+        TableColumn<RecurringTransactionDAO.Rule, String> categoryCol =
+            new TableColumn<>("Category");
+        categoryCol.setCellValueFactory(d ->
+            new javafx.beans.property.SimpleStringProperty(d.getValue().getCategory()));
+
+        TableColumn<RecurringTransactionDAO.Rule, String> typeCol =
+            new TableColumn<>("Type");
+        typeCol.setCellValueFactory(d ->
+            new javafx.beans.property.SimpleStringProperty(d.getValue().getType()));
+
+        TableColumn<RecurringTransactionDAO.Rule, String> amountCol =
+            new TableColumn<>("Amount");
+        amountCol.setCellValueFactory(d ->
+            new javafx.beans.property.SimpleStringProperty(
+                String.format("₹%.2f", d.getValue().getAmount())));
+
+        TableColumn<RecurringTransactionDAO.Rule, String> dayCol =
+            new TableColumn<>("Day of Month");
+        dayCol.setCellValueFactory(d ->
+            new javafx.beans.property.SimpleStringProperty(
+                String.valueOf(d.getValue().getDay())));
+
+        recurringTable.getColumns().addAll(descCol, categoryCol, typeCol, amountCol, dayCol);
+        recurringTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+
+        recurringStatus = new Label("Add recurring rules, then generate entries for a month.");
+        recurringStatus.setWrapText(true);
+
+        Button addRuleButton = new Button("Add Recurring Rule");
+        addRuleButton.setOnAction(e -> {
+            try {
+                String description = recurringDescription.getText().trim();
+                String category = recurringCategory.getText().trim();
+                double amount = Double.parseDouble(recurringAmount.getText().trim());
+                int day = recurringDay.getValue();
+
+                if (description.isEmpty() || category.isEmpty()) {
+                    recurringStatus.setText("Enter a description and category.");
+                    return;
+                }
+                if (!Double.isFinite(amount) || amount <= 0) {
+                    recurringStatus.setText("Amount must be positive.");
+                    return;
+                }
+
+                recurringDAO.addRule(description, category, recurringType.getValue(), amount, day);
+                recurringDescription.clear();
+                recurringCategory.clear();
+                recurringAmount.clear();
+                reloadRecurringRules();
+                recurringStatus.setText("Recurring rule added.");
+            } catch (NumberFormatException ex) {
+                recurringStatus.setText("Enter a valid amount.");
+            } catch (Exception ex) {
+                recurringStatus.setText("Could not add rule: " + ex.getMessage());
+            }
+        });
+
+        ComboBox<String> monthBox = new ComboBox<>();
+        monthBox.getItems().addAll(months);
+        monthBox.setValue(LocalDate.now().getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH));
+
+        ComboBox<Integer> yearBox = new ComboBox<>();
+        int yearNow = LocalDate.now().getYear();
+        for (int y = yearNow - 5; y <= yearNow + 1; y++) yearBox.getItems().add(y);
+        yearBox.setValue(yearNow);
+
+        Button generateButton = new Button("Generate for Month");
+        generateButton.setOnAction(e -> {
+            try {
+                String month = String.format("%04d-%02d",
+                    yearBox.getValue(), monthBox.getSelectionModel().getSelectedIndex() + 1);
+
+                int count = recurringDAO.generateForMonth(month);
+                loadTransactions();
+                loadBudgets(yearBox.getValue(),
+                    monthBox.getSelectionModel().getSelectedIndex() + 1);
+
+                recurringStatus.setText(count == 0
+                    ? "All recurring rules have already been generated for " + month + "."
+                    : count + " recurring transaction(s) added for " + month + ".");
+            } catch (Exception ex) {
+                recurringStatus.setText("Could not generate transactions: " + ex.getMessage());
+            }
+        });
+
+        Button deleteRuleButton = new Button("Delete Selected Rule");
+        deleteRuleButton.setOnAction(e -> {
+            RecurringTransactionDAO.Rule selected =
+                recurringTable.getSelectionModel().getSelectedItem();
+
+            if (selected == null) {
+                recurringStatus.setText("Select a rule first.");
+                return;
+            }
+
+            try {
+                recurringDAO.deleteRule(selected.getId());
+                reloadRecurringRules();
+                recurringStatus.setText("Recurring rule deleted.");
+            } catch (Exception ex) {
+                recurringStatus.setText("Could not delete rule: " + ex.getMessage());
+            }
+        });
+
+        HBox form = new HBox(8, recurringDescription, recurringCategory,
+            recurringType, recurringAmount, recurringDay, addRuleButton);
+
+        HBox generationControls = new HBox(10,
+            new Label("Month:"), monthBox, new Label("Year:"), yearBox, generateButton);
+
+        VBox section = new VBox(12,
+            sectionTitle("Recurring Transactions & Monthly Bills"),
+            new Label("Create repeating income or expense rules and generate each month once."),
+            form, generationControls, recurringTable, deleteRuleButton, recurringStatus);
+
+        styleSection(section);
+        reloadRecurringRules();
+        return section;
+    }
+
+    private void reloadRecurringRules() {
+        if (recurringTable == null) return;
+        try {
+            recurringTable.setItems(
+                FXCollections.observableArrayList(recurringDAO.getRules()));
+        } catch (Exception ex) {
+            recurringStatus.setText("Could not load recurring rules: " + ex.getMessage());
+        }
+    }
+
 
     private void showAlert(String message) {
         Alert alert = new Alert(Alert.AlertType.ERROR);
