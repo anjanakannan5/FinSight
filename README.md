@@ -1,10 +1,9 @@
 # FinSight — Personal Wealth Journal
 
-<<<<<<< HEAD
-FinSight is an AI-powered personal financial analysis and decision-support desktop application crafted for Windows. Designed with an intentional **Personal Wealth Journal** visual identity, it rejects generic AI dashboard templates and fintech clones in favor of editorial typography, warm linen palettes, natural information density, and user-owned offline data privacy.
+
+FinSight is a personal financial analysis and decision-support desktop application crafted for Windows. Designed with an intentional **Personal Wealth Journal** visual identity, it rejects generic AI dashboard templates and fintech clones in favor of editorial typography, warm linen palettes, natural information density, and user-owned offline data privacy.
 =======
 # FinSight
->>>>>>> f54cb54445f08273fb07368dad8212d7152eaab9
 
 ---
 
